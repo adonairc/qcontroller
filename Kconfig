@@ -1,0 +1,86 @@
+# NV-Center Controller Kconfig
+
+mainmenu "NV-Center Controller Configuration"
+
+config NV_SEQUENCER_MAX_EVENTS
+    int "Maximum number of events in pulse sequence"
+    default 4096
+    range 64 65536
+    help
+      Maximum number of pulse events that can be stored in
+      a single sequence. Each event is 16 bytes.
+
+config NV_SEQUENCER_DMA_BUFFER_SIZE
+    int "DMA buffer size for GPIO updates"
+    default 256
+    range 32 1024
+    help
+      Size of DMA ping-pong buffers for GPIO port updates.
+      Larger buffers reduce interrupt overhead but increase latency.
+
+config NV_SEQUENCER_TIMER_RESOLUTION_NS
+    int "Timer resolution in nanoseconds"
+    default 10
+    range 1 1000
+    help
+      Minimum timing resolution for pulse edges.
+      Lower values require higher timer frequency.
+
+config NV_USB_RX_BUFFER_SIZE
+    int "USB receive buffer size"
+    default 4096
+    range 512 65536
+    help
+      Size of USB CDC receive ring buffer.
+
+config NV_USB_TX_BUFFER_SIZE
+    int "USB transmit buffer size"
+    default 2048
+    range 512 32768
+    help
+      Size of USB CDC transmit ring buffer.
+
+config NV_ADC_SAMPLE_BUFFER_SIZE
+    int "ADC sample buffer size"
+    default 1024
+    range 128 8192
+    help
+      Number of ADC samples to buffer before transfer.
+
+config NV_CHANNEL_MW_I_PIN
+    int "MW I channel GPIO pin"
+    default 2
+    help
+      GPIO pin number for Microwave I (in-phase) TTL output.
+
+config NV_CHANNEL_MW_Q_PIN
+    int "MW Q channel GPIO pin"
+    default 3
+    help
+      GPIO pin number for Microwave Q (quadrature) TTL output.
+
+config NV_CHANNEL_LASER_PIN
+    int "Laser channel GPIO pin"
+    default 4
+    help
+      GPIO pin number for Laser TTL output.
+
+config NV_CHANNEL_MASTER_PIN
+    int "Master pulse (lock-in) GPIO pin"
+    default 5
+    help
+      GPIO pin number for Master pulse TTL output (lock-in reference).
+
+config NV_CHANNEL_TRIGGER_OUT_PIN
+    int "Trigger output GPIO pin"
+    default 6
+    help
+      GPIO pin for external trigger output.
+
+config NV_CHANNEL_TRIGGER_IN_PIN
+    int "Trigger input GPIO pin"
+    default 7
+    help
+      GPIO pin for external trigger input.
+
+source "Kconfig.zephyr"
