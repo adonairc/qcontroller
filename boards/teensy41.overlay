@@ -1,13 +1,11 @@
 /*
  * NV-Center Controller - Teensy 4.1 Device Tree Overlay
  *
- * Configures:
- * - FlexPWM for hardware-timed pulse generation
- * - GPT timers for sequencer timing
- * - GPIO for TTL outputs
- * - XBAR for signal routing
- * - ADC_ETC for synchronized acquisition
- * - DMA channels for deterministic transfers
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Minimal overlay for NV-center pulse sequencer.
+ * GPT and other peripherals are accessed via direct register
+ * manipulation in the firmware for deterministic timing.
  */
 
 / {
@@ -16,140 +14,94 @@
         zephyr,shell-uart = &cdc_acm_uart0;
     };
 
-    aliases {
-        /* TTL output channels */
-        nv-mw-i = &gpio1;
-        nv-mw-q = &gpio1;
-        nv-laser = &gpio1;
-        nv-master = &gpio1;
-        nv-trig-out = &gpio1;
-        nv-trig-in = &gpio1;
-
-        /* Sequencer timer */
-        seq-timer = &gpt1;
-
-        /* PWM for fine timing */
-        seq-pwm = &flexpwm1_pwm0;
-    };
-
-    /* NV-Center Controller specific nodes */
+    /* NV-Center Controller pin definitions */
     nv_controller: nv-controller {
-        compatible = "qcontroller,nv-sequencer";
+        compatible = "gpio-leds";
         status = "okay";
 
-        /* TTL Channel GPIO assignments (Teensy 4.1 pinout) */
-        /* Pin 2 = GPIO_EMC_04 = GPIO4.IO04 */
-        /* Pin 3 = GPIO_EMC_05 = GPIO4.IO05 */
-        /* Pin 4 = GPIO_EMC_06 = GPIO4.IO06 */
-        /* Pin 5 = GPIO_EMC_08 = GPIO4.IO08 */
-        /* Pin 6 = GPIO_B0_10 = GPIO2.IO10 */
-        /* Pin 7 = GPIO_B1_01 = GPIO2.IO17 */
+        /*
+         * TTL Channel GPIO assignments (Teensy 4.1 pinout)
+         *
+         * Teensy Pin -> i.MX RT1062 GPIO
+         * Pin 2  -> GPIO4.IO04 (GPIO_EMC_04)
+         * Pin 3  -> GPIO4.IO05 (GPIO_EMC_05)
+         * Pin 4  -> GPIO4.IO06 (GPIO_EMC_06)
+         * Pin 5  -> GPIO4.IO08 (GPIO_EMC_08)
+         * Pin 6  -> GPIO2.IO10 (GPIO_B0_10)
+         * Pin 7  -> GPIO2.IO17 (GPIO_B1_01)
+         * Pin 8  -> GPIO2.IO16 (GPIO_B1_00)
+         * Pin 9  -> GPIO2.IO11 (GPIO_B0_11)
+         */
 
-        mw-i-gpios = <&gpio4 4 GPIO_ACTIVE_HIGH>;
-        mw-q-gpios = <&gpio4 5 GPIO_ACTIVE_HIGH>;
-        laser-gpios = <&gpio4 6 GPIO_ACTIVE_HIGH>;
-        master-gpios = <&gpio4 8 GPIO_ACTIVE_HIGH>;
-        trigger-out-gpios = <&gpio2 10 GPIO_ACTIVE_HIGH>;
-        trigger-in-gpios = <&gpio2 17 GPIO_ACTIVE_LOW>;
+        mw_i: mw-i {
+            gpios = <&gpio4 4 GPIO_ACTIVE_HIGH>;
+            label = "MW_I";
+        };
 
-        /* Timer for sequencer (GPT1 @ 150MHz from PLL) */
-        timer = <&gpt1>;
+        mw_q: mw-q {
+            gpios = <&gpio4 5 GPIO_ACTIVE_HIGH>;
+            label = "MW_Q";
+        };
 
-        /* DMA channel for GPIO updates */
-        dmas = <&edma0 0 0>;
-        dma-names = "gpio-update";
+        laser: laser {
+            gpios = <&gpio4 6 GPIO_ACTIVE_HIGH>;
+            label = "LASER";
+        };
+
+        master: master {
+            gpios = <&gpio4 8 GPIO_ACTIVE_HIGH>;
+            label = "MASTER";
+        };
+
+        trig_out: trig-out {
+            gpios = <&gpio2 10 GPIO_ACTIVE_HIGH>;
+            label = "TRIG_OUT";
+        };
+
+        aux_0: aux-0 {
+            gpios = <&gpio2 17 GPIO_ACTIVE_HIGH>;
+            label = "AUX_0";
+        };
+
+        aux_1: aux-1 {
+            gpios = <&gpio2 16 GPIO_ACTIVE_HIGH>;
+            label = "AUX_1";
+        };
+
+        aux_2: aux-2 {
+            gpios = <&gpio2 11 GPIO_ACTIVE_HIGH>;
+            label = "AUX_2";
+        };
+    };
+
+    /* Trigger input pin */
+    nv_trigger_in: nv-trigger-in {
+        compatible = "gpio-keys";
+        status = "okay";
+
+        trig_in: trig-in {
+            gpios = <&gpio2 18 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+            label = "TRIG_IN";
+        };
     };
 };
 
-/* USB CDC ACM configuration */
+/* USB CDC ACM for host communication */
 &zephyr_udc0 {
     cdc_acm_uart0: cdc_acm_uart0 {
         compatible = "zephyr,cdc-acm-uart";
     };
 };
 
-/* GPT1 - Main sequencer timer (150MHz input clock) */
-&gpt1 {
-    status = "okay";
-    /* Clock source: ipg_clk_highfreq (150MHz) */
-    /* Resolution: 6.67ns per tick */
-};
-
-/* GPT2 - Auxiliary timer for phase measurement */
-&gpt2 {
-    status = "okay";
-};
-
-/* FlexPWM1 for high-resolution pulse generation */
-&flexpwm1_pwm0 {
-    status = "okay";
-    /* PWM frequency can be set up to 150MHz */
-};
-
-&flexpwm1_pwm1 {
-    status = "okay";
-};
-
-&flexpwm1_pwm2 {
-    status = "okay";
-};
-
-&flexpwm1_pwm3 {
-    status = "okay";
-};
-
-/* GPIO1 - Main GPIO bank */
+/* Enable required GPIO ports */
 &gpio1 {
     status = "okay";
 };
 
-/* GPIO2 - Additional IOs */
 &gpio2 {
     status = "okay";
 };
 
-/* GPIO4 - EMC pins (fast GPIO) */
 &gpio4 {
-    status = "okay";
-};
-
-/* eDMA for deterministic GPIO updates */
-&edma0 {
-    status = "okay";
-};
-
-/* ADC1 for signal acquisition */
-&adc1 {
-    status = "okay";
-    #address-cells = <1>;
-    #size-cells = <0>;
-
-    /* Channel configuration for photodiode readout */
-    channel@0 {
-        reg = <0>;
-        zephyr,gain = "ADC_GAIN_1";
-        zephyr,reference = "ADC_REF_INTERNAL";
-        zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
-        zephyr,resolution = <12>;
-    };
-};
-
-/* ADC2 for auxiliary measurements */
-&adc2 {
-    status = "okay";
-    #address-cells = <1>;
-    #size-cells = <0>;
-
-    channel@0 {
-        reg = <0>;
-        zephyr,gain = "ADC_GAIN_1";
-        zephyr,reference = "ADC_REF_INTERNAL";
-        zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
-        zephyr,resolution = <12>;
-    };
-};
-
-/* PIT for periodic interrupt timing */
-&pit0 {
     status = "okay";
 };

@@ -495,15 +495,14 @@ int main(void)
     /* Set up sequencer callback */
     seq_set_completion_callback(sequence_complete_callback, NULL);
 
-    /* Initialize ADC synchronization */
+    /* Initialize ADC synchronization (optional - warn but continue if fails) */
     err = adc_sync_init();
     if (err != NV_OK) {
-        LOG_ERR("Failed to initialize ADC: %d", err);
-        return -1;
+        LOG_WRN("ADC initialization failed: %d (continuing without ADC)", err);
+    } else {
+        /* Set up ADC callback */
+        adc_sync_set_data_callback(adc_data_ready_callback, NULL);
     }
-
-    /* Set up ADC callback */
-    adc_sync_set_data_callback(adc_data_ready_callback, NULL);
 
     /* Apply standard NV XBAR configuration */
     err = xbar_apply_nv_config();

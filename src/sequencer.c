@@ -10,10 +10,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/drivers/counter.h>
-#include <zephyr/drivers/dma.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/irq.h>
 #include <string.h>
 
 #include "sequencer.h"
@@ -21,6 +20,10 @@
 #include "xbar_routing.h"
 
 LOG_MODULE_REGISTER(sequencer, CONFIG_LOG_DEFAULT_LEVEL);
+
+/* i.MX RT1062 GPT1 IRQ number (from reference manual) */
+#define GPT1_IRQn   100
+#define GPT2_IRQn   101
 
 /*
  * i.MX RT1062 Register Definitions
