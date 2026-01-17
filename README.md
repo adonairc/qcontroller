@@ -70,12 +70,14 @@ Firmware for precise pulse sequence generation for NV-center (Nitrogen-Vacancy) 
 # Set up environment
 source ~/zephyrproject/zephyr/zephyr-env.sh
 
-# Build for Teensy 4.1
-west build -b teensy41 .
+# Build for Teensy 4.1 with USB CDC-ACM console
+west build -p always -b teensy41 -S cdc-acm-console .
 
 # Flash
 west flash
 ```
+
+The `-S cdc-acm-console` snippet enables USB CDC-ACM for console/shell and data communication.
 
 ## USB Protocol
 

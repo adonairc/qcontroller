@@ -6,14 +6,12 @@
  * Minimal overlay for NV-center pulse sequencer.
  * GPT and other peripherals are accessed via direct register
  * manipulation in the firmware for deterministic timing.
+ *
+ * USB CDC-ACM is configured via the -S cdc-acm-console snippet.
+ * Build with: west build -p always -b teensy41 -S cdc-acm-console
  */
 
 / {
-    chosen {
-        zephyr,console = &cdc_acm_uart0;
-        zephyr,shell-uart = &cdc_acm_uart0;
-    };
-
     /* NV-Center Controller pin definitions */
     nv_controller: nv-controller {
         compatible = "gpio-leds";
@@ -83,13 +81,6 @@
             gpios = <&gpio2 18 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
             label = "TRIG_IN";
         };
-    };
-};
-
-/* USB CDC ACM for host communication */
-&zephyr_udc0 {
-    cdc_acm_uart0: cdc_acm_uart0 {
-        compatible = "zephyr,cdc-acm-uart";
     };
 };
 

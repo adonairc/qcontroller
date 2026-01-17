@@ -4,10 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * USB CDC ACM protocol handler for host UI communication.
+ * Uses Zephyr's CDC-ACM console snippet approach.
+ *
+ * Build with: west build -b teensy41 -S cdc-acm-console
  */
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/usb/usb_device.h>
 #include <zephyr/usb/usbd.h>
@@ -72,6 +76,7 @@ typedef struct {
 
     /* Connection status */
     bool connected;
+    bool dtr_set;
 
     /* Chunked transfer state */
     event_table_t *chunk_table;
@@ -96,7 +101,7 @@ static event_table_t loaded_table;
 static const char build_date[] = __DATE__;
 
 /*
- * CRC-16-CCITT implementation
+ * CRC-16-CCITT lookup table
  */
 static const uint16_t crc16_table[256] = {
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7,
@@ -151,26 +156,28 @@ static void uart_irq_callback(const struct device *dev, void *user_data)
 {
     ARG_UNUSED(user_data);
 
-    while (uart_irq_update(dev) && uart_irq_is_pending(dev)) {
-        if (uart_irq_rx_ready(dev)) {
-            uint8_t buf[64];
-            int len = uart_fifo_read(dev, buf, sizeof(buf));
+    if (!uart_irq_update(dev)) {
+        return;
+    }
 
-            if (len > 0) {
-                ring_buf_put(&usb_ctx.rx_ring, buf, len);
-                usb_ctx.rx_bytes += len;
-            }
+    while (uart_irq_rx_ready(dev)) {
+        uint8_t buf[64];
+        int len = uart_fifo_read(dev, buf, sizeof(buf));
+
+        if (len > 0) {
+            ring_buf_put(&usb_ctx.rx_ring, buf, len);
+            usb_ctx.rx_bytes += len;
         }
+    }
 
-        if (uart_irq_tx_ready(dev)) {
-            uint8_t buf[64];
-            int len = ring_buf_get(&usb_ctx.tx_ring, buf, sizeof(buf));
+    if (uart_irq_tx_ready(dev)) {
+        uint8_t buf[64];
+        int len = ring_buf_get(&usb_ctx.tx_ring, buf, sizeof(buf));
 
-            if (len > 0) {
-                uart_fifo_fill(dev, buf, len);
-            } else {
-                uart_irq_tx_disable(dev);
-            }
+        if (len > 0) {
+            uart_fifo_fill(dev, buf, len);
+        } else {
+            uart_irq_tx_disable(dev);
         }
     }
 }
@@ -231,7 +238,6 @@ static void process_frame(void)
     case CMD_RESET:
         seq_abort();
         usb_comm_send_response(cmd, RSP_OK, NULL, 0);
-        /* Note: Could trigger system reset here if needed */
         break;
 
     /*
@@ -253,18 +259,15 @@ static void process_frame(void)
         break;
 
     case CMD_SEQ_LOAD_CHUNK: {
-        /* Handle chunked transfer for large sequences */
         uint8_t flags = usb_ctx.rx_header.flags;
 
         if (flags & FLAG_CHUNKED) {
-            /* First chunk - initialize */
             if (usb_ctx.chunk_table == NULL) {
                 usb_ctx.chunk_table = &loaded_table;
                 event_table_init(usb_ctx.chunk_table);
                 usb_ctx.chunk_events_received = 0;
             }
 
-            /* Add events from chunk */
             size_t event_count = len / sizeof(pulse_event_t);
             const pulse_event_t *events = (const pulse_event_t *)payload;
 
@@ -278,7 +281,6 @@ static void process_frame(void)
         }
 
         if (flags & FLAG_LAST_CHUNK) {
-            /* Finalize chunked transfer */
             if (usb_ctx.chunk_table) {
                 event_table_sort(usb_ctx.chunk_table);
                 result = seq_load(usb_ctx.chunk_table);
@@ -393,7 +395,7 @@ static void process_frame(void)
         if (len >= sizeof(cmd_io_pulse_t)) {
             const cmd_io_pulse_t *pulse_cmd = (const cmd_io_pulse_t *)payload;
             seq_set_channel(pulse_cmd->channel, true);
-            k_busy_wait(pulse_cmd->duration_ns / 1000);  /* Approximate */
+            k_busy_wait(pulse_cmd->duration_ns / 1000);
             seq_set_channel(pulse_cmd->channel, false);
             usb_comm_send_response(cmd, RSP_OK, NULL, 0);
         } else {
@@ -517,7 +519,6 @@ static void process_frame(void)
         break;
 
     case CMD_DEBUG_TEST:
-        /* Run self-test */
         usb_comm_send_response(cmd, RSP_OK, NULL, 0);
         break;
 
@@ -557,14 +558,12 @@ static void process_rx_byte(uint8_t byte)
         ((uint8_t *)&usb_ctx.rx_header)[2 + usb_ctx.rx_payload_idx] = byte;
         usb_ctx.rx_payload_idx++;
 
-        if (usb_ctx.rx_payload_idx >= 4) {  /* command, flags, length (2 bytes) */
-            /* Validate length */
+        if (usb_ctx.rx_payload_idx >= 4) {
             if (usb_ctx.rx_header.length > USB_MAX_PAYLOAD_SIZE) {
                 LOG_WRN("Invalid frame length: %u", usb_ctx.rx_header.length);
                 usb_ctx.frame_errors++;
                 usb_ctx.rx_state = RX_STATE_SYNC_1;
             } else if (usb_ctx.rx_header.length == 0) {
-                /* No payload, go to CRC */
                 usb_ctx.rx_state = RX_STATE_CRC;
                 usb_ctx.rx_crc_idx = 0;
             } else {
@@ -590,24 +589,18 @@ static void process_rx_byte(uint8_t byte)
         } else {
             usb_ctx.rx_crc_received |= (uint16_t)byte << 8;
 
-            /* Verify CRC */
-            uint16_t calc_crc = usb_comm_crc16((uint8_t *)&usb_ctx.rx_header,
-                                               USB_HEADER_SIZE);
-            if (usb_ctx.rx_header.length > 0) {
-                /* Continue CRC with payload */
-                calc_crc = 0xFFFF;
-                for (int i = 0; i < USB_HEADER_SIZE; i++) {
-                    calc_crc = (calc_crc << 8) ^
-                        crc16_table[((calc_crc >> 8) ^ ((uint8_t *)&usb_ctx.rx_header)[i]) & 0xFF];
-                }
-                for (int i = 0; i < usb_ctx.rx_header.length; i++) {
-                    calc_crc = (calc_crc << 8) ^
-                        crc16_table[((calc_crc >> 8) ^ usb_ctx.rx_payload[i]) & 0xFF];
-                }
+            /* Compute CRC over header and payload */
+            uint16_t calc_crc = 0xFFFF;
+            for (int i = 0; i < USB_HEADER_SIZE; i++) {
+                calc_crc = (calc_crc << 8) ^
+                    crc16_table[((calc_crc >> 8) ^ ((uint8_t *)&usb_ctx.rx_header)[i]) & 0xFF];
+            }
+            for (int i = 0; i < usb_ctx.rx_header.length; i++) {
+                calc_crc = (calc_crc << 8) ^
+                    crc16_table[((calc_crc >> 8) ^ usb_ctx.rx_payload[i]) & 0xFF];
             }
 
             if (calc_crc == usb_ctx.rx_crc_received) {
-                /* Valid frame - process it */
                 process_frame();
             } else {
                 LOG_WRN("CRC mismatch: expected 0x%04X, got 0x%04X",
@@ -641,35 +634,51 @@ nv_error_t usb_comm_init(void)
     /* Initialize mutex */
     k_mutex_init(&usb_ctx.tx_mutex);
 
-    /* Get UART device */
-    usb_ctx.uart_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);
+    /*
+     * Get UART device from chosen node (set by cdc-acm-console snippet)
+     * The snippet creates the CDC-ACM UART and sets it as zephyr,console
+     */
+#if DT_NODE_HAS_STATUS(DT_CHOSEN(zephyr_console), okay)
+    usb_ctx.uart_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+#else
+    LOG_ERR("No console device found in device tree");
+    return NV_ERR_HARDWARE;
+#endif
+
     if (!device_is_ready(usb_ctx.uart_dev)) {
-        LOG_ERR("USB CDC device not ready");
+        LOG_ERR("UART device not ready");
         return NV_ERR_HARDWARE;
     }
 
-    /* Enable USB */
+    LOG_INF("Using UART device: %s", usb_ctx.uart_dev->name);
+
+    /* Enable USB subsystem - the snippet should have enabled this already */
     int ret = usb_enable(NULL);
     if (ret != 0 && ret != -EALREADY) {
         LOG_ERR("Failed to enable USB: %d", ret);
         return NV_ERR_HARDWARE;
     }
 
-    /* Set up UART interrupt */
-    uart_irq_callback_set(usb_ctx.uart_dev, uart_irq_callback);
+    /* Wait a bit for USB enumeration */
+    k_msleep(100);
+
+    /* Configure UART interrupt callback */
+    uart_irq_callback_user_data_set(usb_ctx.uart_dev, uart_irq_callback, NULL);
+
+    /* Enable RX interrupt */
     uart_irq_rx_enable(usb_ctx.uart_dev);
 
     usb_ctx.rx_state = RX_STATE_SYNC_1;
     usb_ctx.connected = true;
 
-    LOG_INF("USB CDC initialized");
+    LOG_INF("USB CDC initialized successfully");
 
     return NV_OK;
 }
 
 void usb_comm_process(void)
 {
-    /* Process received bytes */
+    /* Process received bytes from ring buffer */
     uint8_t byte;
     while (ring_buf_get(&usb_ctx.rx_ring, &byte, 1) == 1) {
         process_rx_byte(byte);
@@ -686,6 +695,10 @@ nv_error_t usb_comm_send_response(uint8_t command,
                                   const void *payload,
                                   uint16_t length)
 {
+    if (!usb_ctx.uart_dev) {
+        return NV_ERR_NOT_READY;
+    }
+
     k_mutex_lock(&usb_ctx.tx_mutex, K_FOREVER);
 
     /* Build frame header */
@@ -711,7 +724,7 @@ nv_error_t usb_comm_send_response(uint8_t command,
     usb_ctx.tx_frame[frame_len++] = crc & 0xFF;
     usb_ctx.tx_frame[frame_len++] = (crc >> 8) & 0xFF;
 
-    /* Send frame */
+    /* Send frame via polling (simple and reliable) */
     for (size_t i = 0; i < frame_len; i++) {
         uart_poll_out(usb_ctx.uart_dev, usb_ctx.tx_frame[i]);
     }
@@ -727,23 +740,20 @@ nv_error_t usb_comm_send_event(uint8_t event_type,
                                const void *payload,
                                uint16_t length)
 {
-    /* Events use the event type as the command code */
     return usb_comm_send_response(event_type, RSP_OK, payload, length);
 }
 
 nv_error_t usb_comm_send_adc_data(const uint16_t *data, uint32_t samples)
 {
-    /* Send ADC data in chunks if necessary */
     uint32_t max_samples_per_frame = (USB_MAX_PAYLOAD_SIZE - 4) / sizeof(uint16_t);
     uint32_t offset = 0;
 
     while (offset < samples) {
         uint32_t chunk_samples = MIN(samples - offset, max_samples_per_frame);
 
-        /* Build payload with header */
         uint8_t payload[USB_MAX_PAYLOAD_SIZE];
-        uint32_t *header = (uint32_t *)payload;
-        header[0] = offset;  /* Sample offset */
+        uint32_t *pheader = (uint32_t *)payload;
+        pheader[0] = offset;
 
         memcpy(payload + 4, &data[offset], chunk_samples * sizeof(uint16_t));
 
