@@ -13,8 +13,6 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
-#include <zephyr/usb/usb_device.h>
-#include <zephyr/usb/usbd.h>
 #include <zephyr/sys/ring_buffer.h>
 #include <zephyr/logging/log.h>
 #include <string.h>
@@ -652,14 +650,11 @@ nv_error_t usb_comm_init(void)
 
     LOG_INF("Using UART device: %s", usb_ctx.uart_dev->name);
 
-    /* Enable USB subsystem - the snippet should have enabled this already */
-    int ret = usb_enable(NULL);
-    if (ret != 0 && ret != -EALREADY) {
-        LOG_ERR("Failed to enable USB: %d", ret);
-        return NV_ERR_HARDWARE;
-    }
-
-    /* Wait a bit for USB enumeration */
+    /*
+     * With the new USB device stack (usbd) and cdc-acm-console snippet,
+     * USB is automatically enabled during system initialization.
+     * We just need to wait for the device to be ready.
+     */
     k_msleep(100);
 
     /* Configure UART interrupt callback */
